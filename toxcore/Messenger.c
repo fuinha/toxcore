@@ -1817,6 +1817,7 @@ Messenger *new_messenger(Messenger_Options *options, unsigned int *error)
         return NULL;
     }
 
+    m->group_announce->m = m;
     m->group_handler = new_groupchats(m);
 
     if (m->group_handler == NULL) {
@@ -1855,6 +1856,8 @@ Messenger *new_messenger(Messenger_Options *options, unsigned int *error)
             kill_onion(m->onion);
             kill_onion_announce(m->onion_a);
             kill_onion_client(m->onion_c);
+            kill_gca(m->group_announce);
+            kill_groupchats(m->group_handler);
             kill_net_crypto(m->net_crypto);
             kill_DHT(m->dht);
             kill_networking(m->net);

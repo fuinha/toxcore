@@ -21,7 +21,7 @@
 #ifndef GROUP_ANNOUNCE_H
 #define GROUP_ANNOUNCE_H
 
-#include "DHT.h"
+#include "Messenger.h"
 #include "stdbool.h"
 
 typedef struct GC_Announce GC_Announce;
@@ -72,12 +72,20 @@ struct GC_AnnouncedSelf {
 
 struct GC_Announce {
     DHT *dht;
+    Messenger *m;
+
     void (*update_addresses)(GC_Announce *, const uint8_t *, void *);
     void *update_addresses_obj;
 
     struct GC_AnnouncedNode announcements[MAX_GCA_ANNOUNCED_NODES];
     struct GC_AnnounceRequest requests[MAX_GCA_SELF_REQUESTS];
     struct GC_AnnouncedSelf self_announce[MAX_GCA_SELF_ANNOUNCEMENTS];
+
+    TCP_Connections *tcp_conn;
+    uint8_t tcp_public_key[ENC_PUBLIC_KEY];
+    uint8_t tcp_secret_key[ENC_SECRET_KEY];
+
+    uint64_t last_run;
 };
 
 /* Initiate the process of announcing a group to the DHT.
@@ -121,19 +129,11 @@ GC_Announce *new_gca(DHT *dht);
 /* Called when associated Messenger object is killed. */
 void kill_gca(GC_Announce *announce);
 
-/* Copies your own ip_port structure to dest. (TODO: This should probably go somewhere else)
- *
- * Return 0 on succcess.
- * Return -1 on failure.
- */
-int ipport_self_copy(const DHT *dht, IP_Port *dest);
+/* Copies your own ip_port structure to dest. (TODO: This should probably go somewhere else) */
+void ipport_self_copy(const DHT *dht, IP_Port *dest);
 
-/* Creates a GC_Announce_Node using client_id and your own IP_Port struct
- *
- * Return 0 on success.
- * Return -1 on failure.
- */
-int make_self_gca_node(const DHT *dht, GC_Announce_Node *node, const uint8_t *client_id);
+/* Creates a GC_Announce_Node using client_id and your own IP_Port struct */
+void make_self_gca_node(const DHT *dht, GC_Announce_Node *node, const uint8_t *client_id);
 
 /* Pack number of nodes into data of maxlength length.
  *

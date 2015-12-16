@@ -95,6 +95,9 @@ typedef struct  {
     int (*onion_callback)(void *object, const uint8_t *data, uint16_t length);
     void *onion_callback_object;
 
+    int (*gc_announce_callback)(void *object, const uint8_t *data, uint16_t length);
+    void *gc_announce_callback_object;
+
     /* Can be used by user. */
     void *custom_object;
     uint32_t custom_uint;
@@ -120,6 +123,14 @@ void kill_TCP_connection(TCP_Client_Connection *TCP_connection);
 int send_onion_request(TCP_Client_Connection *con, const uint8_t *data, uint16_t length);
 void onion_response_handler(TCP_Client_Connection *con, int (*onion_callback)(void *object, const uint8_t *data,
                             uint16_t length), void *object);
+
+/* return 1 on success.
+ * return 0 if could not send packet.
+ * return -1 onfailure (connection must be killed).
+ */
+int send_gc_announce(TCP_Client_Connection *con, const uint8_t *data, uint16_t length, uint8_t type);
+void gc_announce_handler(TCP_Client_Connection *con, int (*gc_announce_callback)(void *object,
+                         const uint8_t *data, uint16_t length), void *object);
 
 /* return 1 on success.
  * return 0 if could not send packet.

@@ -4626,6 +4626,9 @@ void do_gc(GC_Session *c)
         if (!chat)
             continue;
 
+        if (chat->numpeers == 0)
+            continue;
+
         do_group_tcp(chat);
 
         switch (chat->connection_state) {
@@ -5050,8 +5053,7 @@ int gc_invite_friend(GC_Session *c, GC_Chat *chat, int32_t friendnumber)
     memcpy(packet + 1, CHAT_ID(chat->chat_public_key), CHAT_ID_SIZE);
 
     GC_Announce_Node self_node;
-    if (make_self_gca_node(c->messenger->dht, &self_node, chat->self_public_key) == -1)
-        return -1;
+    make_self_gca_node(c->messenger->dht, &self_node, chat->self_public_key);
 
     int node_len = pack_gca_nodes(packet + 1 + CHAT_ID_SIZE, sizeof(GC_Announce_Node), &self_node, 1);
 

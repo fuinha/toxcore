@@ -146,8 +146,7 @@ bool mod_list_chosen_one(const GC_Chat *chat, const uint8_t *sig_pk)
             return false;
     }
 
-    if (id_closest(CHAT_ID(chat->chat_public_key), sig_pk,
-                   SIG_PK(chat->shared_state.founder_public_key)) == 2)
+    if (id_closest(CHAT_ID(chat->chat_public_key), sig_pk, SIG_PK(chat->shared_state.founder_public_key)) == 2)
         return false;
 
     return true;

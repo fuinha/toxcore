@@ -267,7 +267,8 @@ void gcc_resend_packets(Messenger *m, GC_Chat *chat, uint32_t peernum)
     }
 }
 
-/* Sends a packet to the peer associated with gconn.
+/* Sends a packet to the peer associated with gconn. Tries to send a UDP packet via direct connection
+ * and falls back to TCP.
  *
  * Returns 0 on success.
  * Returns -1 on failure.

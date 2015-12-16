@@ -70,7 +70,7 @@ typedef struct {
     uint64_t connected_time;
     uint32_t lock_count;
     uint32_t sleep_count;
-    _Bool onion;
+    _Bool substitutes;
 
     /* Only used when connection is sleeping. */
     IP_Port ip_port;
@@ -100,10 +100,13 @@ typedef struct {
     int (*tcp_onion_callback)(void *object, const uint8_t *data, uint16_t length);
     void *tcp_onion_callback_object;
 
+    int (*tcp_gc_announce_callback)(void *object, const uint8_t *data, uint16_t length);
+    void *tcp_gc_announce_callback_object;
+
     TCP_Proxy_Info proxy_info;
 
-    _Bool onion_status;
-    uint16_t onion_num_conns;
+    _Bool substitute_status;
+    uint16_t sub_num_conns;
 } TCP_Connections;
 
 /* Send a packet to the TCP connection.
@@ -113,7 +116,7 @@ typedef struct {
  */
 int send_packet_tcp_connection(TCP_Connections *tcp_c, int connections_number, const uint8_t *packet, uint16_t length);
 
-/* Return a random TCP connection number for use in send_tcp_onion_request.
+/* Return a random TCP connection number.
  *
  * TODO: This number is just the index of an array that the elements can
  * change without warning.
@@ -121,7 +124,7 @@ int send_packet_tcp_connection(TCP_Connections *tcp_c, int connections_number, c
  * return TCP connection number on success.
  * return -1 on failure.
  */
-int get_random_tcp_onion_conn_number(TCP_Connections *tcp_c);
+int get_random_tcp_substitute_conn_number(TCP_Connections *tcp_c);
 
 /* Send an onion packet via the TCP relay corresponding to tcp_connections_number.
  *
@@ -131,14 +134,23 @@ int get_random_tcp_onion_conn_number(TCP_Connections *tcp_c);
 int tcp_send_onion_request(TCP_Connections *tcp_c, unsigned int tcp_connections_number, const uint8_t *data,
                            uint16_t length);
 
-/* Set if we want TCP_connection to allocate some connection for onion use.
+/* Send a group announce packet via the TCP relay corresponding to tcp_connections_number.
+ * type should be TCP_PACKET_GC_ANNOUNCE_REQUEST or TCP_PACKET_GC_GET_REQUEST.
+ *
+ * return 0 on success.
+ * return -1 on failure.
+ */
+int tcp_send_group_announce(TCP_Connections *tcp_c, unsigned int tcp_connections_number, const uint8_t *data,
+                            uint16_t length, uint8_t type);
+
+/* Set if we want TCP_connection to allocate some connection for other uses.
  *
  * If status is 1, allocate some connections. if status is 0, don't.
  *
  * return 0 on success.
  * return -1 on failure.
  */
-int set_tcp_onion_status(TCP_Connections *tcp_c, _Bool status);
+int set_tcp_substitute_status(TCP_Connections *tcp_c, _Bool status);
 
 /* Send an oob packet via the TCP relay corresponding to tcp_connections_number.
  *
@@ -157,6 +169,11 @@ void set_packet_tcp_connection_callback(TCP_Connections *tcp_c, int (*tcp_data_c
  */
 void set_onion_packet_tcp_connection_callback(TCP_Connections *tcp_c, int (*tcp_onion_callback)(void *object,
         const uint8_t *data, uint16_t length), void *object);
+
+/* Set the callback for TCP group announcement packets.
+*/
+void set_gc_announce_packet_tcp_connection_callback(TCP_Connections *tcp_c, int (*tcp_gc_announce_callback)
+        (void *object, const uint8_t *data, uint16_t length), void *object);
 
 /* Set the callback for TCP oob data packets.
  */

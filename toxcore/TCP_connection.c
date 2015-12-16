@@ -274,7 +274,7 @@ int send_packet_tcp_connection(TCP_Connections *tcp_c, int connections_number, c
     }
 }
 
-/* Return a random TCP connection number for use in send_tcp_onion_request.
+/* Return a random TCP connection number.
  *
  * TODO: This number is just the index of an array that the elements can
  * change without warning.
@@ -282,14 +282,14 @@ int send_packet_tcp_connection(TCP_Connections *tcp_c, int connections_number, c
  * return TCP connection number on success.
  * return -1 on failure.
  */
-int get_random_tcp_onion_conn_number(TCP_Connections *tcp_c)
+int get_random_tcp_substitute_conn_number(TCP_Connections *tcp_c)
 {
     unsigned int i, r = rand();
 
     for (i = 0; i < tcp_c->tcp_connections_length; ++i) {
         unsigned int index = ((i + r) % tcp_c->tcp_connections_length);
 
-        if (tcp_c->tcp_connections[index].onion && tcp_c->tcp_connections[index].status == TCP_CONN_CONNECTED) {
+        if (tcp_c->tcp_connections[index].substitutes && tcp_c->tcp_connections[index].status == TCP_CONN_CONNECTED) {
             return index;
         }
     }
@@ -311,6 +311,28 @@ int tcp_send_onion_request(TCP_Connections *tcp_c, unsigned int tcp_connections_
 
     if (tcp_c->tcp_connections[tcp_connections_number].status == TCP_CONN_CONNECTED) {
         int ret = send_onion_request(tcp_c->tcp_connections[tcp_connections_number].connection, data, length);
+
+        if (ret == 1)
+            return 0;
+    }
+
+    return -1;
+}
+
+/* Send a group announce packet via the TCP relay corresponding to tcp_connections_number.
+ *
+ * return 0 on success.
+ * return -1 on failure.
+ */
+int tcp_send_group_announce(TCP_Connections *tcp_c, unsigned int tcp_connections_number, const uint8_t *data,
+                            uint16_t length, uint8_t type)
+{
+    if (tcp_connections_number >= tcp_c->tcp_connections_length) {
+        return -1;
+    }
+
+    if (tcp_c->tcp_connections[tcp_connections_number].status == TCP_CONN_CONNECTED) {
+        int ret = send_gc_announce(tcp_c->tcp_connections[tcp_connections_number].connection, data, length, type);
 
         if (ret == 1)
             return 0;
@@ -370,6 +392,14 @@ void set_onion_packet_tcp_connection_callback(TCP_Connections *tcp_c, int (*tcp_
     tcp_c->tcp_onion_callback_object = object;
 }
 
+/* Set the callback for TCP group announcement packets.
+*/
+void set_gc_announce_packet_tcp_connection_callback(TCP_Connections *tcp_c, int (*tcp_gc_announce_callback)
+                                                    (void *object, const uint8_t *data, uint16_t length), void *object)
+{
+    tcp_c->tcp_gc_announce_callback = tcp_gc_announce_callback;
+    tcp_c->tcp_gc_announce_callback_object = object;
+}
 
 /* Find the TCP connection with public_key.
  *
@@ -670,8 +700,8 @@ static int kill_tcp_relay_connection(TCP_Connections *tcp_c, int tcp_connections
         }
     }
 
-    if (tcp_con->onion) {
-        --tcp_c->onion_num_conns;
+    if (tcp_con->substitutes) {
+        --tcp_c->sub_num_conns;
     }
 
     kill_TCP_connection(tcp_con->connection);
@@ -711,9 +741,9 @@ static int reconnect_tcp_relay_connection(TCP_Connections *tcp_c, int tcp_connec
         }
     }
 
-    if (tcp_con->onion) {
-        --tcp_c->onion_num_conns;
-        tcp_con->onion = 0;
+    if (tcp_con->substitutes) {
+        --tcp_c->sub_num_conns;
+        tcp_con->substitutes = 0;
     }
 
     tcp_con->lock_count = 0;
@@ -754,9 +784,9 @@ static int sleep_tcp_relay_connection(TCP_Connections *tcp_c, int tcp_connection
         }
     }
 
-    if (tcp_con->onion) {
-        --tcp_c->onion_num_conns;
-        tcp_con->onion = 0;
+    if (tcp_con->substitutes) {
+        --tcp_c->sub_num_conns;
+        tcp_con->substitutes = 0;
     }
 
     tcp_con->lock_count = 0;
@@ -944,6 +974,16 @@ static int tcp_onion_callback(void *object, const uint8_t *data, uint16_t length
     return 0;
 }
 
+static int tcp_gc_announce_callback(void *object, const uint8_t *data, uint16_t length)
+{
+    TCP_Connections *tcp_c = object;
+
+    if (tcp_c->tcp_gc_announce_callback)
+        tcp_c->tcp_gc_announce_callback(tcp_c->tcp_gc_announce_callback_object, data, length);
+
+    return 0;
+}
+
 /* Set callbacks for the TCP relay connection.
  *
  * return 0 on success.
@@ -961,6 +1001,7 @@ static int tcp_relay_set_callbacks(TCP_Connections *tcp_c, int tcp_connections_n
     con->custom_object = tcp_c;
     con->custom_uint = tcp_connections_number;
     onion_response_handler(con, &tcp_onion_callback, tcp_c);
+    gc_announce_handler(con, &tcp_gc_announce_callback, tcp_c);
     routing_response_handler(con, &tcp_response_callback, con);
     routing_status_handler(con, &tcp_status_callback, con);
     routing_data_handler(con, &tcp_data_callback, con);
@@ -1000,9 +1041,9 @@ static int tcp_relay_on_online(TCP_Connections *tcp_c, int tcp_connections_numbe
         tcp_con->connected_time = 0;
     }
 
-    if (tcp_c->onion_status && tcp_c->onion_num_conns < NUM_ONION_TCP_CONNECTIONS) {
-        tcp_con->onion = 1;
-        ++tcp_c->onion_num_conns;
+    if (tcp_c->substitute_status && tcp_c->sub_num_conns < NUM_ONION_TCP_CONNECTIONS) {
+        tcp_con->substitutes = 1;
+        ++tcp_c->sub_num_conns;
     }
 
     return 0;
@@ -1174,16 +1215,16 @@ unsigned int tcp_copy_connected_relays(TCP_Connections *tcp_c, Node_format *tcp_
     return copied;
 }
 
-/* Set if we want TCP_connection to allocate some connection for onion use.
+/* Set if we want TCP_connection to allocate some connection for other uses.
  *
  * If status is 1, allocate some connections. if status is 0, don't.
  *
  * return 0 on success.
  * return -1 on failure.
  */
-int set_tcp_onion_status(TCP_Connections *tcp_c, _Bool status)
+int set_tcp_substitute_status(TCP_Connections *tcp_c, _Bool status)
 {
-    if (tcp_c->onion_status == status)
+    if (tcp_c->substitute_status == status)
         return -1;
 
     if (status) {
@@ -1193,18 +1234,18 @@ int set_tcp_onion_status(TCP_Connections *tcp_c, _Bool status)
             TCP_con *tcp_con = get_tcp_connection(tcp_c, i);
 
             if (tcp_con) {
-                if (tcp_con->status == TCP_CONN_CONNECTED && !tcp_con->onion) {
-                    ++tcp_c->onion_num_conns;
-                    tcp_con->onion = 1;
+                if (tcp_con->status == TCP_CONN_CONNECTED && !tcp_con->substitutes) {
+                    ++tcp_c->sub_num_conns;
+                    tcp_con->substitutes = 1;
                 }
             }
 
-            if (tcp_c->onion_num_conns >= NUM_ONION_TCP_CONNECTIONS)
+            if (tcp_c->sub_num_conns >= NUM_ONION_TCP_CONNECTIONS)
                 break;
         }
 
-        if (tcp_c->onion_num_conns < NUM_ONION_TCP_CONNECTIONS) {
-            unsigned int wakeup = NUM_ONION_TCP_CONNECTIONS - tcp_c->onion_num_conns;
+        if (tcp_c->sub_num_conns < NUM_ONION_TCP_CONNECTIONS) {
+            unsigned int wakeup = NUM_ONION_TCP_CONNECTIONS - tcp_c->sub_num_conns;
 
             for (i = 0; i < tcp_c->tcp_connections_length; ++i) {
                 TCP_con *tcp_con = get_tcp_connection(tcp_c, i);
@@ -1220,7 +1261,7 @@ int set_tcp_onion_status(TCP_Connections *tcp_c, _Bool status)
             }
         }
 
-        tcp_c->onion_status = 1;
+        tcp_c->substitute_status = 1;
     } else {
         unsigned int i;
 
@@ -1228,14 +1269,14 @@ int set_tcp_onion_status(TCP_Connections *tcp_c, _Bool status)
             TCP_con *tcp_con = get_tcp_connection(tcp_c, i);
 
             if (tcp_con) {
-                if (tcp_con->onion) {
-                    --tcp_c->onion_num_conns;
-                    tcp_con->onion = 0;
+                if (tcp_con->substitutes) {
+                    --tcp_c->sub_num_conns;
+                    tcp_con->substitutes = 0;
                 }
             }
         }
 
-        tcp_c->onion_status = 0;
+        tcp_c->substitute_status = 0;
     }
 
     return 0;
@@ -1293,7 +1334,7 @@ static void do_tcp_conns(TCP_Connections *tcp_c)
                     tcp_relay_on_online(tcp_c, i);
                 }
 
-                if (tcp_con->status == TCP_CONN_CONNECTED && !tcp_con->onion && tcp_con->lock_count
+                if (tcp_con->status == TCP_CONN_CONNECTED && !tcp_con->substitutes && tcp_con->lock_count
                         && tcp_con->lock_count == tcp_con->sleep_count
                         && is_timeout(tcp_con->connected_time, TCP_CONNECTION_ANNOUNCE_TIMEOUT)) {
                     sleep_tcp_relay_connection(tcp_c, i);
@@ -1319,7 +1360,7 @@ static void kill_nonused_tcp(TCP_Connections *tcp_c)
 
         if (tcp_con) {
             if (tcp_con->status == TCP_CONN_CONNECTED) {
-                if (!tcp_con->onion && !tcp_con->lock_count && is_timeout(tcp_con->connected_time, TCP_CONNECTION_ANNOUNCE_TIMEOUT)) {
+                if (!tcp_con->substitutes && !tcp_con->lock_count && is_timeout(tcp_con->connected_time, TCP_CONNECTION_ANNOUNCE_TIMEOUT)) {
                     to_kill[num_kill] = i;
                     ++num_kill;
                 }

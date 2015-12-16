@@ -606,6 +606,28 @@ void onion_response_handler(TCP_Client_Connection *con, int (*onion_callback)(vo
     con->onion_callback_object = object;
 }
 
+/* return 1 on success.
+ * return 0 if could not send packet.
+ * return -1 onfailure (connection must be killed).
+ */
+int send_gc_announce(TCP_Client_Connection *con, const uint8_t *data, uint16_t length, uint8_t type)
+{
+    if (!(type == TCP_PACKET_GC_ANNOUNCE_REQUEST || type == TCP_PACKET_GC_GET_REQUEST))
+        return 0;
+
+    uint8_t packet[1 + length];
+    packet[0] = type;
+    memcpy(packet + 1, data, length);
+    return write_packet_TCP_secure_connection(con, packet, sizeof(packet), 0);
+}
+
+void gc_announce_handler(TCP_Client_Connection *con, int (*gc_announce_callback)(void *object,
+                         const uint8_t *data, uint16_t length), void *object)
+{
+    con->gc_announce_callback = gc_announce_callback;
+    con->gc_announce_callback_object = object;
+}
+
 /* Create new TCP connection to ip_port/public_key
  */
 TCP_Client_Connection *new_TCP_connection(IP_Port ip_port, const uint8_t *public_key, const uint8_t *self_public_key,
