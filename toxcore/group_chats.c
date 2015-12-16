@@ -367,7 +367,7 @@ static void update_gc_addresses_cb(GC_Announce *announce, const uint8_t *chat_id
 
     clear_gc_addrs_list(chat);
 
-    GC_Announce_Node nodes[MAX_GCA_SELF_REQUESTS];
+    Node_format nodes[MAX_GCA_SELF_REQUESTS];
     uint32_t num_nodes = gca_get_requested_nodes(announce, CHAT_ID(chat->chat_public_key), nodes);
     chat->num_addrs = MIN(num_nodes, MAX_GC_PEER_ADDRS);
 
@@ -5052,10 +5052,10 @@ int gc_invite_friend(GC_Session *c, GC_Chat *chat, int32_t friendnumber)
 
     memcpy(packet + 1, CHAT_ID(chat->chat_public_key), CHAT_ID_SIZE);
 
-    GC_Announce_Node self_node;
+    Node_format self_node;
     make_self_gca_node(c->messenger->dht, &self_node, chat->self_public_key);
 
-    int node_len = pack_gca_nodes(packet + 1 + CHAT_ID_SIZE, sizeof(GC_Announce_Node), &self_node, 1);
+    int node_len = pack_nodes(packet + 1 + CHAT_ID_SIZE, sizeof(Node_format), &self_node, 1);
 
     if (node_len <= 0) {
         fprintf(stderr, "pack_gca_nodes failed in gc_invite_friend (%d)\n", node_len);
@@ -5082,8 +5082,8 @@ int gc_accept_invite(GC_Session *c, const uint8_t *data, uint16_t length, const 
     uint8_t chat_id[CHAT_ID_SIZE];
     memcpy(chat_id, data, CHAT_ID_SIZE);
 
-    GC_Announce_Node node;
-    if (unpack_gca_nodes(&node, 1, 0, data + CHAT_ID_SIZE, length - CHAT_ID_SIZE, 0) != 1)
+    Node_format node;
+    if (unpack_nodes(&node, 1, 0, data + CHAT_ID_SIZE, length - CHAT_ID_SIZE, 0) != 1)
         return -1;
 
     int err = -2;
