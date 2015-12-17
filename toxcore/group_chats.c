@@ -294,7 +294,7 @@ static int group_announce_request(GC_Session *c, const GC_Chat *chat)
         return 0;
 
     return gca_send_announce_request(c->announce, chat->self_public_key, chat->self_secret_key,
-                                     CHAT_ID(chat->chat_public_key));
+                                     CHAT_ID(chat->chat_public_key), chat->tcp_nodes, chat->num_tcp_nodes);
 }
 
 /* Sends a get nodes request to the DHT if group is public.
@@ -350,6 +350,8 @@ static void clear_gc_addrs_list(GC_Chat *chat)
      chat->num_addrs = 0;
 }
 
+static unsigned int add_gc_tcp_nodes(GC_Chat *chat, const Node_format *nodes, unsigned int num_nodes);
+
 /* This callback is triggered when we receive a get nodes response from DHT.
  * The respective chat_id's addr_list will be updated with the newly announced nodes.
  *
@@ -367,8 +369,11 @@ static void update_gc_addresses_cb(GC_Announce *announce, const uint8_t *chat_id
 
     clear_gc_addrs_list(chat);
 
+    unsigned int num_tcp_nodes = 0;
     Node_format nodes[MAX_GCA_SELF_REQUESTS];
-    uint32_t num_nodes = gca_get_requested_nodes(announce, CHAT_ID(chat->chat_public_key), nodes);
+    Node_format tcp_nodes[MAX_GC_TCP_NODES];
+    uint32_t num_nodes = gca_get_requested_nodes(announce, CHAT_ID(chat->chat_public_key), nodes, tcp_nodes,
+                                                 &num_tcp_nodes);
     chat->num_addrs = MIN(num_nodes, MAX_GC_PEER_ADDRS);
 
     if (chat->num_addrs == 0)
@@ -382,8 +387,14 @@ static void update_gc_addresses_cb(GC_Announce *announce, const uint8_t *chat_id
     }
 
     /* If we're already connected this is part of the DHT sync procedure */
-    if (chat->connection_state == CS_CONNECTED)
+    if (chat->connection_state == CS_CONNECTED) {
         sync_gc_announced_nodes(c, chat);
+        return;
+    }
+
+    if (num_tcp_nodes) {
+        chat->num_tcp_nodes = add_gc_tcp_nodes(chat, tcp_nodes, num_tcp_nodes);
+    }
 }
 
 void group_callback_update_addresses(GC_Announce *announce, void (*function)(GC_Announce *, const uint8_t *, void *),
@@ -1157,9 +1168,10 @@ static int sync_gc_announced_nodes(const GC_Session *c, GC_Chat *chat)
     uint16_t i;
 
     for (i = 0; i < chat->num_addrs; ++i) {
-        if (get_peernum_of_enc_pk(chat, chat->addr_list[i].public_key) == -1)
+        if (get_peernum_of_enc_pk(chat, chat->addr_list[i].public_key) == -1) {
             send_gc_handshake_request(c->messenger, chat->groupnumber, chat->addr_list[i].ip_port,
                                       chat->addr_list[i].public_key, HS_PEER_INFO_EXCHANGE, HJ_PUBLIC);
+        }
     }
 
     return 0;
@@ -4693,6 +4705,41 @@ void do_gc(GC_Session *c)
     }
 }
 
+/* Adds TCP relays to the group's TCP connection and adds tcp nodes to group instance.
+ *
+ * Returns the number of nodes successfully added.
+ */
+static unsigned int add_gc_tcp_nodes(GC_Chat *chat, const Node_format *nodes, unsigned int num_nodes)
+{
+    unsigned int i, num = 0;
+
+    for (i = 0; i < num_nodes && num < MAX_GC_TCP_NODES; ++i) {
+        if (add_tcp_relay_global(chat->tcp_conn, nodes[i].ip_port, nodes[i].public_key) == 0) {
+            memcpy(&chat->tcp_nodes[num++], &nodes[i], sizeof(Node_format));
+            fprintf(stderr, "added TCP node: %s\n", id_toa(chat->tcp_nodes[num-1].public_key));
+        }
+    }
+
+    return num;
+}
+
+/* Initiates a TCP connection for the group.
+ *
+ * Returns 0 on success.
+ * Returns -1 on failure.
+ */
+static int init_gc_tcp_connection(Messenger *m, GC_Chat *chat)
+{
+    chat->tcp_conn = new_tcp_connections(chat->self_secret_key, &m->options.proxy_info);
+
+    if (chat->tcp_conn == NULL)
+        return -1;
+
+    set_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_packet, m);
+    set_oob_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_oob_packet, m);
+    return 0;
+}
+
 /* Set the size of the groupchat list to n.
  *
  *  return -1 on failure.
@@ -4736,25 +4783,6 @@ static int get_new_group_index(GC_Session *c)
     ++c->num_chats;
 
     return new_index;
-}
-
-static int init_gc_tcp_connection(Messenger *m, GC_Chat *chat)
-{
-    chat->tcp_conn = new_tcp_connections(chat->self_secret_key, &m->options.proxy_info);
-
-    if (chat->tcp_conn == NULL)
-        return -1;
-
-    uint16_t num_relays = m->net_crypto->tcp_c->tcp_connections_length;
-    Node_format tcp_relays[num_relays];
-    unsigned int i, num = tcp_copy_connected_relays(m->net_crypto->tcp_c, tcp_relays, num_relays);
-
-    for (i = 0; i < num; ++i)
-        add_tcp_relay_global(chat->tcp_conn, tcp_relays[i].ip_port, tcp_relays[i].public_key);
-
-    set_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_packet, m);
-    set_oob_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_oob_packet, m);
-    return 0;
 }
 
 static int create_new_group(GC_Session *c, bool founder)
@@ -4945,6 +4973,10 @@ int gc_group_add(GC_Session *c, uint8_t privacy_state, const uint8_t *group_name
         return -4;
 
     create_extended_keypair(chat->chat_public_key, chat->chat_secret_key);
+
+    Node_format tcp_nodes[MAX_GC_TCP_NODES];
+    unsigned int num = tcp_copy_connected_relays(c->messenger->net_crypto->tcp_c, tcp_nodes, MAX_GC_TCP_NODES);
+    chat->num_tcp_nodes = add_gc_tcp_nodes(chat, tcp_nodes, num);
 
     if (init_gc_shared_state(chat, privacy_state, group_name, length) == -1) {
         group_delete(c, chat);

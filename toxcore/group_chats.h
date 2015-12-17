@@ -41,6 +41,7 @@ typedef struct Messenger Messenger;
 #define MAX_GC_PEER_ADDRS 30
 #define MAX_GC_PASSWD_SIZE 32
 #define MAX_GC_MODERATORS 128
+#define MAX_GC_TCP_NODES 4
 
 #define GC_MOD_LIST_ENTRY_SIZE SIG_PUBLIC_KEY
 #define GC_MODERATION_HASH_SIZE crypto_hash_sha256_BYTES
@@ -202,7 +203,6 @@ typedef struct GC_Connection GC_Connection;
 
 typedef struct GC_Chat {
     Networking_Core *net;
-    TCP_Connections *tcp_conn;
 
     GC_GroupPeer    *group;
     GC_Connection   *gcc;
@@ -243,6 +243,10 @@ typedef struct GC_Chat {
     GC_PeerAddress addr_list[MAX_GC_PEER_ADDRS];
     uint16_t    num_addrs;
     uint16_t    addrs_idx;
+
+    TCP_Connections *tcp_conn;
+    Node_format     tcp_nodes[MAX_GC_TCP_NODES];
+    unsigned int    num_tcp_nodes;
 } GC_Chat;
 
 typedef struct GC_Session {

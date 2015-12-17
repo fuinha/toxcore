@@ -31,19 +31,23 @@ typedef struct GC_Session GC_Session;
 #define MAX_GCA_ANNOUNCED_NODES 30
 #define MAX_GCA_SELF_ANNOUNCEMENTS 30
 #define MAX_GCA_SENT_NODES 4
+#define MAX_GCA_TCP_NODES 4
 
 /* Holds nodes that we receive when we send a request. Used to join groups */
 struct GC_AnnounceRequest {
     Node_format nodes[MAX_GCA_SENT_NODES];
     uint64_t req_id;
     uint64_t time_added;
-    uint8_t chat_id[CHAT_ID_SIZE];
-    uint8_t self_public_key[ENC_PUBLIC_KEY];
-    uint8_t self_secret_key[ENC_SECRET_KEY];
+    uint8_t  chat_id[CHAT_ID_SIZE];
+    uint8_t  self_public_key[ENC_PUBLIC_KEY];
+    uint8_t  self_secret_key[ENC_SECRET_KEY];
     bool ready;
+
+    Node_format tcp_nodes[MAX_GCA_TCP_NODES];
+    unsigned int num_tcp_nodes;
 };
 
-/* Holds announced nodes we get via DHT announcements */
+/* Holds a node we obtained via DHT announcements */
 struct GC_AnnouncedNode {
     uint8_t chat_id[CHAT_ID_SIZE];
     Node_format node;
@@ -52,17 +56,23 @@ struct GC_AnnouncedNode {
     uint64_t time_added;
     uint64_t ping_id;
     bool self;   /* true if this is our own announcement; will never be pinged or timeout */
+
+    Node_format tcp_nodes[MAX_GCA_TCP_NODES];
+    unsigned int num_tcp_nodes;
 };
 
 /* Holds our own announcements when we join a group.
  * Currently will only keep track of up to MAX_GCA_SELF_ANNOUNCEMENTS groups at once.
  */
 struct GC_AnnouncedSelf {
-    uint8_t chat_id[CHAT_ID_SIZE];
-    uint8_t self_public_key[ENC_PUBLIC_KEY];
-    uint8_t self_secret_key[ENC_SECRET_KEY];
+    uint8_t  chat_id[CHAT_ID_SIZE];
+    uint8_t  self_public_key[ENC_PUBLIC_KEY];
+    uint8_t  self_secret_key[ENC_SECRET_KEY];
     uint64_t last_rcvd_ping;
     bool is_set;
+
+    Node_format tcp_nodes[MAX_GCA_TCP_NODES];
+    unsigned int num_tcp_nodes;
 };
 
 struct GC_Announce {
@@ -89,12 +99,13 @@ struct GC_Announce {
  * self_public_key: encryption public key of the peer announcing its presence
  * self_secret_key: encryption secret key of the peer
  * chat_id: chat_id of the group (chat public signature key)
+ * tcp_nodes: Designated TCP nodes for the group.
  *
  * Returns a non-negative value on success.
  * Returns -1 on failure.
  */
-int gca_send_announce_request(GC_Announce *announce, const uint8_t *self_public_key,
-                              const uint8_t *self_secret_key, const uint8_t *chat_id);
+int gca_send_announce_request(GC_Announce *announce, const uint8_t *self_public_key, const uint8_t *self_secret_key,
+                              const uint8_t *chat_id, const Node_format *tcp_nodes, unsigned int num_tcp_nodes);
 
 /* Creates a DHT request for nodes that hold announcements for chat_id.
  *
@@ -108,7 +119,8 @@ int gca_send_get_nodes_request(GC_Announce *announce, const uint8_t *self_public
  *
  * returns the number of nodes found.
  */
-size_t gca_get_requested_nodes(GC_Announce *announce, const uint8_t *chat_id, Node_format *nodes);
+size_t gca_get_requested_nodes(GC_Announce *announce, const uint8_t *chat_id, Node_format *nodes,
+                               Node_format *tcp_nodes, unsigned int *num_tcp_nodes);
 
 /* Main group announce loop: Pings nodes and checks timeouts. */
 void do_gca(GC_Announce *announce);
