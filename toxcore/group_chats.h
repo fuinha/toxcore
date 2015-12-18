@@ -49,6 +49,9 @@ typedef struct Messenger Messenger;
 #define GC_CONFIRMED_PEER_TIMEOUT (GC_PING_INTERVAL * 4 + 10)
 #define GC_UNCONFRIMED_PEER_TIMEOUT GC_PING_INTERVAL
 
+/* Magic number to indicate that a direct connection should not be used for a given IP */
+#define GC_BAD_IP_PORT 0x45541D5
+
 typedef enum GROUP_PRIVACY_STATE {
     GI_PUBLIC,
     GI_PRIVATE,

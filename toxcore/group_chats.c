@@ -948,11 +948,15 @@ static int send_gc_sync_request(GC_Chat *chat, uint32_t peernumber, uint32_t num
 
     chat->gcc[peernumber].pending_sync_request = true;
 
-    uint32_t length = HASH_ID_BYTES + sizeof(uint32_t) + MAX_GC_PASSWD_SIZE;
+    if (!chat->num_tcp_nodes)
+        chat->gcc[peernumber].pending_tcp_request = true;
+
+    uint32_t length = HASH_ID_BYTES + (sizeof(uint32_t) * 2) + MAX_GC_PASSWD_SIZE;
     uint8_t data[length];
     U32_to_bytes(data, chat->self_public_key_hash);
     U32_to_bytes(data + HASH_ID_BYTES, num_peers);
-    memcpy(data + HASH_ID_BYTES + sizeof(uint32_t), chat->shared_state.passwd, MAX_GC_PASSWD_SIZE);
+    U32_to_bytes(data + HASH_ID_BYTES + sizeof(uint32_t), (uint32_t) chat->num_tcp_nodes);
+    memcpy(data + HASH_ID_BYTES + (sizeof(uint32_t) * 2), chat->shared_state.passwd, MAX_GC_PASSWD_SIZE);
 
     return send_lossless_group_packet(chat, peernumber, data, length, GP_SYNC_REQUEST);
 }
@@ -1040,13 +1044,15 @@ static int handle_gc_sync_response(Messenger *m, int groupnumber, uint32_t peern
     return 0;
 }
 
+static int send_peer_group_tcp_relays(GC_Chat *chat, uint32_t peernumber);
 static int send_peer_shared_state(GC_Chat *chat, uint32_t peernumber);
 static int send_peer_mod_list(GC_Chat *chat, uint32_t peernumber);
 static int send_peer_sanctions_list(GC_Chat *chat, uint32_t peernumber);
 static int send_peer_topic(GC_Chat *chat, uint32_t peernumber);
 
 /* Handles a sync request packet and sends a response containing the peer list.
- * Additionally sends the group topic, shared state, mod list and sanctions list in respective packets.
+ * Additionally sends the group topic, shared state, mod list and sanctions list in respective packets,
+ * as well as TCP nodes (if requested).
  *
  * If the group is password protected the password in the request data must first be verified.
  *
@@ -1056,7 +1062,7 @@ static int send_peer_topic(GC_Chat *chat, uint32_t peernumber);
 static int handle_gc_sync_request(const Messenger *m, int groupnumber, uint32_t peernumber, const uint8_t *data,
                                   uint32_t length)
 {
-    if (length != sizeof(uint32_t) + MAX_GC_PASSWD_SIZE)
+    if (length != (sizeof(uint32_t) * 2) + MAX_GC_PASSWD_SIZE)
         return -1;
 
     GC_Chat *chat = gc_get_group(m->group_handler, groupnumber);
@@ -1067,13 +1073,6 @@ static int handle_gc_sync_request(const Messenger *m, int groupnumber, uint32_t 
     if (chat->connection_state != CS_CONNECTED)
         return -1;
 
-    uint32_t req_num_peers;
-    bytes_to_U32(&req_num_peers, data);
-
-    /* Sync is not necessary */
-    if (req_num_peers > 0 && req_num_peers >= get_gc_confirmed_numpeers(chat))
-        return 0;
-
     if (chat->shared_state.passwd_len > 0) {
         uint8_t passwd[MAX_GC_PASSWD_SIZE];
         memcpy(passwd, data + sizeof(uint32_t), MAX_GC_PASSWD_SIZE);
@@ -1081,6 +1080,13 @@ static int handle_gc_sync_request(const Messenger *m, int groupnumber, uint32_t 
         if (memcmp(chat->shared_state.passwd, passwd, chat->shared_state.passwd_len) != 0)
             return -1;
     }
+
+    uint32_t req_num_peers, num_tcp_nodes;
+    bytes_to_U32(&req_num_peers, data);
+    bytes_to_U32(&num_tcp_nodes, data + sizeof(uint32_t));
+
+    if (!num_tcp_nodes && chat->num_tcp_nodes)
+        send_peer_group_tcp_relays(chat, peernumber);
 
     /* Do not change the order of these four calls or else */
     if (send_peer_shared_state(chat, peernumber) == -1)
@@ -1094,6 +1100,10 @@ static int handle_gc_sync_request(const Messenger *m, int groupnumber, uint32_t 
 
     if (send_peer_topic(chat, peernumber) == -1)
         return -1;
+
+    /* Sync is not necessary */
+    if (req_num_peers && req_num_peers >= get_gc_confirmed_numpeers(chat))
+        return 0;
 
     uint8_t response[MAX_GC_PACKET_SIZE];
     U32_to_bytes(response, chat->self_public_key_hash);
@@ -1177,18 +1187,57 @@ static int sync_gc_announced_nodes(const GC_Session *c, GC_Chat *chat)
     return 0;
 }
 
+/* Adds TCP relays to the group's TCP connection and adds tcp nodes to group instance.
+ *
+ * Returns the number of nodes successfully added.
+ */
+static unsigned int add_gc_tcp_nodes(GC_Chat *chat, const Node_format *nodes, unsigned int num_nodes)
+{
+    unsigned int i, num = 0;
+
+    for (i = 0; i < num_nodes && num < MAX_GC_TCP_NODES; ++i) {
+        if (add_tcp_relay_global(chat->tcp_conn, nodes[i].ip_port, nodes[i].public_key) == 0) {
+            memcpy(&chat->tcp_nodes[num++], &nodes[i], sizeof(Node_format));
+            fprintf(stderr, "added TCP node: %s\n", id_toa(chat->tcp_nodes[num-1].public_key));
+        }
+    }
+
+    return num;
+}
+
+int handle_gc_tcp_packet(void *object, int id, const uint8_t *packet, uint16_t length);
+int handle_gc_tcp_oob_packet(void *object, const uint8_t *public_key, unsigned int tcp_connections_number,
+                             const uint8_t *packet, uint16_t length);
+
+/* Initiates a TCP connection for the group.
+ *
+ * Returns 0 on success.
+ * Returns -1 on failure.
+ */
+static int init_gc_tcp_connection(Messenger *m, GC_Chat *chat)
+{
+    chat->tcp_conn = new_tcp_connections(chat->self_secret_key, &m->options.proxy_info);
+
+    if (chat->tcp_conn == NULL)
+        return -1;
+
+    set_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_packet, m);
+    set_oob_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_oob_packet, m);
+    return 0;
+}
+
 /* Shares our TCP relays with peernumber and adds shared relays to our connection with them.
  *
  * Returns 0 on success.
  * Returns -1 on failure.
  */
-static int send_gc_tcp_relays(GC_Chat *chat, uint32_t peernumber)
+static int send_peer_group_tcp_relays(GC_Chat *chat, uint32_t peernumber)
 {
-    Node_format tcp_relays[GCC_MAX_TCP_SHARED_RELAYS];
-    unsigned int i, num = tcp_copy_connected_relays(chat->tcp_conn, tcp_relays, GCC_MAX_TCP_SHARED_RELAYS);
+    Node_format tcp_relays[MAX_GC_TCP_NODES];
+    unsigned int i, num = tcp_copy_connected_relays(chat->tcp_conn, tcp_relays, MAX_GC_TCP_NODES);
 
     if (num == 0)
-        return 0;
+        return -1;
 
     uint8_t data[HASH_ID_BYTES + sizeof(tcp_relays)];
     U32_to_bytes(data, chat->self_public_key_hash);
@@ -1208,17 +1257,16 @@ static int send_gc_tcp_relays(GC_Chat *chat, uint32_t peernumber)
     if (send_lossy_group_packet(chat, peernumber, data, length, GP_TCP_RELAYS) == -1)
         return -1;
 
-    chat->gcc[peernumber].last_tcp_relays_shared = unix_time();
     return 0;
 }
 
-/* Adds peernumber's shared TCP relays to our connection with them.
+/* Adds group TCP relays to our group TCP instance.
  *
  * Returns 0 on success.
  * Returns -1 on failure.
  */
-static int handle_gc_tcp_relays(Messenger *m, int groupnumber, uint32_t peernumber, const uint8_t *data,
-                                uint32_t length)
+static int handle_gc_group_tcp_relays(Messenger *m, int groupnumber, uint32_t peernumber, const uint8_t *data,
+                                      uint32_t length)
 {
     if (length == 0)
         return -1;
@@ -1229,24 +1277,26 @@ static int handle_gc_tcp_relays(Messenger *m, int groupnumber, uint32_t peernumb
     if (chat == NULL)
         return -1;
 
-    if (chat->connection_state != CS_CONNECTED)
+    if (!chat->gcc[peernumber].pending_tcp_request)
         return -1;
 
-    if (!chat->gcc[peernumber].confirmed)
-        return -1;
-
-    Node_format tcp_relays[GCC_MAX_TCP_SHARED_RELAYS];
-    int num_nodes = unpack_nodes(tcp_relays, GCC_MAX_TCP_SHARED_RELAYS, NULL, data, length, 1);
+    Node_format tcp_relays[MAX_GC_TCP_NODES];
+    int num_nodes = unpack_nodes(tcp_relays, MAX_GC_TCP_NODES, NULL, data, length, 1);
 
     if (num_nodes <= 0)
         return -1;
 
+    if (add_gc_tcp_nodes(chat, tcp_relays, num_nodes) == 0)
+        return -1;
+
     int i;
 
-    for (i = 0; i < num_nodes; ++i)
+    for (i = 0; i < num_nodes; ++i) {
         add_tcp_relay_connection(chat->tcp_conn, chat->gcc[peernumber].tcp_connection_num, tcp_relays[i].ip_port,
                                  tcp_relays[i].public_key);
+    }
 
+    chat->gcc[peernumber].pending_tcp_request = false;
     return 0;
 }
 
@@ -4121,7 +4171,7 @@ static int handle_gc_lossy_message(Messenger *m, GC_Chat *chat, const uint8_t *p
             ret = handle_gc_invite_response_reject(m, chat->groupnumber, real_data, len);
             break;
         case GP_TCP_RELAYS:
-            ret = handle_gc_tcp_relays(m, chat->groupnumber, peernumber, real_data, len);
+            ret = handle_gc_group_tcp_relays(m, chat->groupnumber, peernumber, real_data, len);
             break;
         case GP_CUSTOM_PACKET:
             ret = handle_gc_custom_packet(m, chat->groupnumber, peernumber, real_data, len);
@@ -4446,11 +4496,18 @@ static int peer_add(Messenger *m, int groupnumber, IP_Port *ipp, const uint8_t *
 
         if (tcp_connection_num == -1)
             return -1;
+
+        unsigned int i;
+
+        for (i = 0; i < chat->num_tcp_nodes; ++i) {
+            add_tcp_relay_connection(chat->tcp_conn, tcp_connection_num, chat->tcp_nodes[i].ip_port,
+                                     chat->tcp_nodes[i].public_key);
+        }
     }
 
     int peernumber = chat->numpeers;
 
-    GC_Connection *tmp_gcc = realloc(chat->gcc, sizeof(GC_Connection) * (chat->numpeers + 1));
+    GC_Connection *tmp_gcc = realloc(chat->gcc, sizeof(GC_Connection) * (peernumber + 1));
 
     if (tmp_gcc == NULL) {
         kill_tcp_connection_to(chat->tcp_conn, tcp_connection_num);
@@ -4521,11 +4578,6 @@ static void do_peer_connections(Messenger *m, int groupnumber)
     uint32_t i;
 
     for (i = 1; i < chat->numpeers; ++i) {
-        if (chat->gcc[i].confirmed) {
-            if (is_timeout(chat->gcc[i].last_tcp_relays_shared, GCC_TCP_SHARED_RELAYS_TIMEOUT))
-                send_gc_tcp_relays(chat, i);
-        }
-
         if (peer_timed_out(chat, i)) {
             gc_peer_delete(m, groupnumber, i, (uint8_t *) "Timed out", 9);
         } else {
@@ -4703,41 +4755,6 @@ void do_gc(GC_Session *c)
             }
         }
     }
-}
-
-/* Adds TCP relays to the group's TCP connection and adds tcp nodes to group instance.
- *
- * Returns the number of nodes successfully added.
- */
-static unsigned int add_gc_tcp_nodes(GC_Chat *chat, const Node_format *nodes, unsigned int num_nodes)
-{
-    unsigned int i, num = 0;
-
-    for (i = 0; i < num_nodes && num < MAX_GC_TCP_NODES; ++i) {
-        if (add_tcp_relay_global(chat->tcp_conn, nodes[i].ip_port, nodes[i].public_key) == 0) {
-            memcpy(&chat->tcp_nodes[num++], &nodes[i], sizeof(Node_format));
-            fprintf(stderr, "added TCP node: %s\n", id_toa(chat->tcp_nodes[num-1].public_key));
-        }
-    }
-
-    return num;
-}
-
-/* Initiates a TCP connection for the group.
- *
- * Returns 0 on success.
- * Returns -1 on failure.
- */
-static int init_gc_tcp_connection(Messenger *m, GC_Chat *chat)
-{
-    chat->tcp_conn = new_tcp_connections(chat->self_secret_key, &m->options.proxy_info);
-
-    if (chat->tcp_conn == NULL)
-        return -1;
-
-    set_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_packet, m);
-    set_oob_packet_tcp_connection_callback(chat->tcp_conn, &handle_gc_tcp_oob_packet, m);
-    return 0;
 }
 
 /* Set the size of the groupchat list to n.

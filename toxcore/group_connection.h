@@ -30,9 +30,6 @@
 /* Max number of messages to store in the send/recv arrays (must fit inside an uint16) */
 #define GCC_BUFFER_SIZE 8192
 
-/* Max number of TCP relays we share with a peer */
-#define GCC_MAX_TCP_SHARED_RELAYS 3
-
 /* The time between attempts to share our TCP relays with a peer */
 #define GCC_TCP_SHARED_RELAYS_TIMEOUT 300
 
@@ -67,11 +64,11 @@ typedef struct GC_Connection {
 
     int         tcp_connection_num;
     uint64_t    last_recv_direct_time;   /* the last time we received a direct packet from this peer */
-    uint64_t    last_tcp_relays_shared;  /* the last time we tried to send this peer our tcp relays */
+    bool        pending_tcp_request;    /* true if we've requested TCP nodes from this peer and are awaiting a reply */
 
     uint64_t    last_rcvd_ping;
     uint64_t    time_added;
-    bool        pending_sync_request;   /* true if we have sent this peer a sync request and have not received a reply*/
+    bool        pending_sync_request;   /* true if we have sent this peer a sync request and are awaiting a reply */
     bool        pending_state_sync;    /* used for group state syncing */
     bool        ignore;
     bool        handshaked; /* true if we've successfully handshaked with this peer */

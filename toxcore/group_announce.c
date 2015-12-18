@@ -53,9 +53,6 @@
 #define GCA_NODES_EXPIRATION (GCA_PING_INTERVAL * 3 + 10)
 #define MAX_GCA_PACKET_SIZE 1024
 
-/* Magic number to indicate that a direct connection should not be used for a given IP */
-#define GCA_BAD_IP_PORT 0x45541D5
-
 static int print_nodes(const Node_format *nodes, unsigned int num)
 {
     unsigned int i;
@@ -68,7 +65,7 @@ static int print_nodes(const Node_format *nodes, unsigned int num)
 /* Returns true if IP_Port is set as invalid */
 bool ipport_is_bad(const IP_Port *ip_port)
 {
-    return ip_port->ip.ip4.uint32 == GCA_BAD_IP_PORT || ip_port->port == 0;
+    return ip_port->ip.ip4.uint32 == GC_BAD_IP_PORT || ip_port->port == 0;
 }
 
 /* Copies your own ip_port structure to dest. (TODO: This should probably go somewhere else) */
@@ -92,7 +89,7 @@ void ipport_self_copy(const DHT *dht, IP_Port *dest)
     if (!ipport_isset(dest)) {
         memset(dest, 0, sizeof(IP_Port));
         dest->ip.family = AF_INET;
-        dest->ip.ip4.uint32 = GCA_BAD_IP_PORT;
+        dest->ip.ip4.uint32 = GC_BAD_IP_PORT;
     }
 }
 
@@ -271,7 +268,8 @@ static size_t send_gca_packet_announce(GC_Announce *announce, const uint8_t *cha
 
     /* Add to announcements if we're the closest node to chat_id */
     if (sent == 0) {
-        store_gca_announcement(announce, chat_id, data, data_len, self);
+        if (store_gca_announcement(announce, chat_id, data, data_len, self) == 0)
+            return 1;
     }
 
     return sent;
