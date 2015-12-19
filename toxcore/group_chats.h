@@ -250,6 +250,7 @@ typedef struct GC_Chat {
     TCP_Connections *tcp_conn;
     Node_format     tcp_nodes[MAX_GC_TCP_NODES];
     unsigned int    num_tcp_nodes;
+    uint64_t        last_tcp_nodes_check;
 } GC_Chat;
 
 typedef struct GC_Session {

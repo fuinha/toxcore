@@ -426,15 +426,13 @@ static int store_gca_announcement(GC_Announce *announce, const uint8_t *chat_id,
     uint16_t node_len = 0;
     Node_format node;
 
-    if (unpack_nodes(&node, 1, &node_len, data + 1 + CHAT_ID_SIZE, data_len - 1 - CHAT_ID_SIZE, 0) != 1) {
+    if (unpack_nodes(&node, 1, &node_len, data + 1 + CHAT_ID_SIZE, data_len - 1 - CHAT_ID_SIZE, 0) != 1)
         return -1;
-    }
 
     int num_tcp_nodes = unpack_nodes(tcp_nodes, MAX_GCA_TCP_NODES, 0, data + 1 + CHAT_ID_SIZE + node_len,
                                      data_len - 1 - CHAT_ID_SIZE - node_len, 1);
-    if (num_tcp_nodes == -1) {
+    if (num_tcp_nodes == -1)
         return -1;
-    }
 
     add_gc_announced_node(announce, chat_id, node, data, data_len, tcp_nodes, num_tcp_nodes, self);
 
@@ -583,7 +581,8 @@ int gca_send_announce_request(GC_Announce *announce, const uint8_t *self_public_
     if (gca_self_announce_set(announce, chat_id, self_public_key))
         return 0;
 
-    add_gca_self_announce(announce, chat_id, self_public_key, self_secret_key, tcp_nodes, num_tcp_nodes);
+    if (add_gca_self_announce(announce, chat_id, self_public_key, self_secret_key, tcp_nodes, num_tcp_nodes) == -1)
+        return -1;
 
     /* packet contains: type, chat_id, self_node, tcp nodes */
     uint8_t data[1 + CHAT_ID_SIZE + sizeof(Node_format) + (sizeof(Node_format) * num_tcp_nodes)];
@@ -606,7 +605,7 @@ int gca_send_announce_request(GC_Announce *announce, const uint8_t *self_public_
     if (tcp_nodes_size == -1)
         return -1;
 
-    if ((node_size + tcp_nodes_size) <= 0)
+    if (node_size + tcp_nodes_size <= 0)
         return -1;
 
     if (length > MAX_GCA_PACKET_SIZE)
@@ -794,7 +793,7 @@ int handle_gca_get_nodes_response(void *object, IP_Port ipp, const uint8_t *pack
 
     uint16_t data_length = length - (GCA_HEADER_SIZE + crypto_box_MACBYTES + RAND_ID_SIZE);
 
-    if (data_length <= 1 + sizeof(uint32_t) + RAND_ID_SIZE)
+    if (data_length <= 1 + (sizeof(uint32_t) * 2) + RAND_ID_SIZE)
         return -1;
 
     uint8_t data[data_length];
@@ -834,6 +833,7 @@ int handle_gca_get_nodes_response(void *object, IP_Port ipp, const uint8_t *pack
 
     uint16_t nodes_size = 0;
     Node_format nodes[num_nodes];
+
     int num_packed = unpack_nodes(nodes, num_nodes, &nodes_size, data + 1 + sizeof(uint32_t),
                                   plain_length - 1 - sizeof(uint32_t), 0);
 
@@ -842,10 +842,13 @@ int handle_gca_get_nodes_response(void *object, IP_Port ipp, const uint8_t *pack
         return -1;
     }
 
+    if (plain_length - 1 - sizeof(uint32_t) - nodes_size < sizeof(uint32_t))
+        return -1;
+
     uint32_t num_tcp_nodes = 0;
     bytes_to_U32(&num_tcp_nodes, data + 1 + sizeof(uint32_t) + nodes_size);
 
-    if (num_nodes > MAX_GCA_TCP_NODES)
+    if (num_tcp_nodes > MAX_GCA_TCP_NODES)
         return -1;
 
     Node_format tcp_nodes[num_tcp_nodes];
@@ -1070,6 +1073,7 @@ static int init_gca_tcp_connection(GC_Announce *announce)
     }
 
     crypto_box_keypair(announce->tcp_public_key, announce->tcp_secret_key);
+
     announce->tcp_conn = new_tcp_connections(announce->tcp_secret_key, &m->options.proxy_info);
 
     if (announce->tcp_conn == NULL) {

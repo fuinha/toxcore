@@ -47,7 +47,7 @@ struct GC_AnnounceRequest {
     unsigned int num_tcp_nodes;
 };
 
-/* Holds a node we obtained via DHT announcements */
+/* Holds a DHT announcement entry */
 struct GC_AnnouncedNode {
     uint8_t chat_id[CHAT_ID_SIZE];
     Node_format node;

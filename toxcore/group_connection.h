@@ -54,7 +54,7 @@ typedef struct GC_Connection {
     uint64_t recv_message_id;   /* message_id of peer's last message to us */
     struct GC_Message_Ary recv_ary[GCC_BUFFER_SIZE];
 
-    uint32_t    peer_id;    /* Permanent ID (used for the public API) */
+    uint32_t    peer_id;    /* permanent ID (used for the public API) */
 
     GC_PeerAddress   addr;   /* holds peer's extended real public key and ip_port */
     uint32_t    public_key_hash;   /* hash of peer's real encryption public key */
@@ -63,8 +63,9 @@ typedef struct GC_Connection {
     uint8_t     shared_key[crypto_box_BEFORENMBYTES];  /* made with our session sk and peer's session pk */
 
     int         tcp_connection_num;
+    bool        pending_tcp_request;
     uint64_t    last_recv_direct_time;   /* the last time we received a direct packet from this peer */
-    bool        pending_tcp_request;    /* true if we've requested TCP nodes from this peer and are awaiting a reply */
+    uint64_t    last_tcp_nodes_check;    /* the last time we checked that our TCP nodes are valid */
 
     uint64_t    last_rcvd_ping;
     uint64_t    time_added;
