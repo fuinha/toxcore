@@ -2619,6 +2619,9 @@ static uint32_t groups_save(const Messenger *m, uint8_t *data)
             uint16_t num_addrs = gc_copy_peer_addrs(&c->chats[i], temp.addrs, GROUP_SAVE_MAX_PEERS);
             temp.num_addrs = htons(num_addrs);
 
+            uint16_t num_tcp_nodes = gc_copy_group_tcp_nodes(&c->chats[i], temp.tcp_nodes, MAX_GC_TCP_NODES);
+            temp.num_tcp_nodes = htons(num_tcp_nodes);
+
             temp.num_mods = htons(c->chats[i].moderation.num_mods);
             mod_list_pack(&c->chats[i], temp.mod_list);
 

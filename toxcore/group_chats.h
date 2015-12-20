@@ -250,6 +250,7 @@ typedef struct GC_Chat {
     TCP_Connections *tcp_conn;
     Node_format     tcp_nodes[MAX_GC_TCP_NODES];
     unsigned int    num_tcp_nodes;
+    bool            request_tcp_nodes;   /* True if we want to request new TCP nodes */
     uint64_t        last_tcp_nodes_check;
 } GC_Chat;
 
@@ -317,6 +318,8 @@ struct SAVED_GROUP {
     uint8_t   chat_secret_key[EXT_SECRET_KEY];
     uint16_t  num_addrs;
     GC_PeerAddress addrs[GROUP_SAVE_MAX_PEERS];
+    uint16_t  num_tcp_nodes;
+    Node_format tcp_nodes[MAX_GC_TCP_NODES];
     uint16_t  num_mods;
     uint8_t   mod_list[GC_MOD_LIST_ENTRY_SIZE * MAX_GC_MODERATORS];
 
@@ -671,6 +674,13 @@ void pack_gc_mod_list(const GC_Chat *chat, uint8_t *data);
  * Returns number of addresses copied.
  */
 uint16_t gc_copy_peer_addrs(const GC_Chat *chat, GC_PeerAddress *addrs, size_t max_addrs);
+
+
+/* Copies our group TCP nodes to nodes array.
+ *
+ * Returns number of TCP nodes copied.
+ */
+uint16_t gc_copy_group_tcp_nodes(const GC_Chat *chat, Node_format *nodes, size_t max_nodes);
 
 /* If read_id is non-zero sends a read-receipt for ack_id's packet.
  * If request_id is non-zero sends a request for the respective id's packet.
